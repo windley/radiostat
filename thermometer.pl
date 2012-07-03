@@ -1,10 +1,7 @@
 #!/usr/bin/perl -w
 # First, start the daemon.
-#   ./thermometer.pl
-# Then you may run the test with
-#   echo "ping" | netcat localhost 5422
-#   kill $(cat /tmp/net.pid)
-# Don't forget to check /var/log/messages!
+#   ./thermometer.pl --user=<uid>
+
 
 use warnings;
 use strict;
