@@ -10,7 +10,8 @@ use strict;
 use vars qw/ %opt /;
 
 my $debug = 0;
-my $host = "thermostat-6D-72-A8";
+#my $host = "thermostat-6D-72-A8";
+my $host = "10.0.1.173";
 my $tempurl = "http://$host/tstat";
 
 my $ua = LWP::UserAgent->new;
