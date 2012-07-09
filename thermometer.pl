@@ -16,10 +16,13 @@ use MIME::Lite;
 use MIME::Base64;
 use Getopt::Std;
 use JSON;
-
+use YAML::XS;
+use Data::Dumper;
 
 use Kinetic::Raise;
 
+
+use constant DEFAULT_CONFIG_FILE => 'config.yml';
 
 
 #
@@ -28,25 +31,18 @@ use Kinetic::Raise;
 
 my $mode     = 0;     # increase output
 
-my %os_opts  =
-  ( pid_file   => "/tmp/temperature.pid",  # usually in /var/run
-    user       => undef,
-    group      => undef
-  );
+my $config_filename;
 
-my %run_opts =
-  ( background => 1,
-    max_childs => 1,    # there can only be one multiplexer
-    sleep_secs => 60,
-  );
+my %os_opts  = ();
+
+my %run_opts = ();
 
 GetOptions
    'background|bg!' => \$run_opts{background},
-   'childs|c=i'     => \$run_opts{max_childs},
    'group|g=s'      => \$os_opts{group},
    'pid-file|p=s'   => \$os_opts{pid_file},
    'user|u=s'       => \$os_opts{user},
-   'sleep|s=i'      => \$run_opts{sleep_secs},
+   'config=s'       => \$config_filename,
    'v+'             => \$mode  # -v -vv -vvv
     or exit 1;
 
@@ -55,19 +51,15 @@ $run_opts{background} ||= 1;
 #
 ## initialize the thermostat
 #
-my $host = "10.0.1.173";
-my $thermo_url = "http://$host/tstat";
 
-my $ua = LWP::UserAgent->new;
-my $req = HTTP::Request->new(GET => $thermo_url);
+my $config = read_config($config_filename || DEFAULT_CONFIG_FILE);
 
-my $eci = 'cb68f5a0-a787-012f-49f0-00163ebcdddd';
+# print Dumper $config;
 
-my $event = Kinetic::Raise->new('thermostat',
-			        'temperature',
-				{'eci' => $eci}
-			       );
-
+$run_opts{max_childs} ||= ($config->{max_children} || 1);
+$os_opts{user} ||= $config->{user};
+$os_opts{group} ||= $config->{group};
+$os_opts{pid_file} ||= ($config->{pid_file} || '/tmp/thermometer.pid');
 
 #
 ## initialize the daemon activities
@@ -75,22 +67,57 @@ my $event = Kinetic::Raise->new('thermostat',
 
 # From now on, all errors and warnings are also sent to syslog,
 # provided by Log::Report. Output still also to the screen.
-dispatcher SYSLOG => 'syslog', accept => 'INFO-'
-  , identity => 'thermometer daemon', facility => 'local0';
-
+dispatcher SYSLOG => 'syslog', accept => 'INFO-', identity => 'thermometer daemon', facility => 'local0';
 dispatcher mode => $mode, 'ALL' if $mode;
-
 
 my $daemon = Any::Daemon->new(%os_opts);
 
-$daemon->run(child_task => \&run_task, %run_opts
-	    );
+foreach my $k (keys %{ $config->{devices} }) {
+
+  if ($config->{devices}->{$k}->{type} eq 'thermometer') {
+    $daemon->run(child_task => &run_temperature_task($k, $config->{devices}->{$k}), 
+		 %run_opts
+		);
+  } else {
+    warning "No handler for device $k with type $config->{devices}->{$k}->{type}";
+  }
+
+
+}
+
 
 exit 1;   # will never be called
 
-sub run_task() {
-  print "HEY THERE!\n";
+#
+# the task sub routines return a closure that has been properly configured. 
+#
+
+sub run_temperature_task(@) {
+  my ($name, $config) = @_;
+
+#  info Dumper $config;
+
+  warning "No host name for termperature sensor $name" unless $config->{host};
+  warning "No event channel identifier for termperature sensor $name" unless $config->{eci};
+
+  my $thermo_url = "http://$config->{host}/tstat";
+
+  my $ua = LWP::UserAgent->new;
+  my $req = HTTP::Request->new(GET => $thermo_url);
+
+  my $event = Kinetic::Raise->new('thermostat',
+				  'temperature',
+				  {'eci' => $config->{eci}}
+				 );
+
+  my $sleep_sec = $config->{sleep_secs} || 60;
+
+
+  return sub {
+
+
     info "Starting temperature daemon";
+
     while(1) {   
 
       my $res = $ua->request($req);
@@ -114,11 +141,27 @@ sub run_task() {
 
       }
 
-      sleep $run_opts{sleep_secs};
-      
+      sleep $sleep_sec;
     }
 
     exit 0;
+    
+  }
+
+
 }
+
+
+sub read_config {
+    my ($filename) = @_;
+    my $config;
+    if ( -e $filename ) {
+      $config = YAML::XS::LoadFile($filename) ||
+	warning "Can't open configuration file $filename: $!";
+    }
+
+    return $config;
+}
+
 
 1;

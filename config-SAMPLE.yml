@@ -1,0 +1,14 @@
+
+
+# should be 1 unless you know something I don't
+max_children: 1
+user: pjw
+# group: 
+# pid_file: 
+
+devices: 
+  thermometer_1:  # name
+    type: thermometer
+    sleep_secs: 60
+    host: # put the IP address of your thermostat here
+    eci: # put the ECI for your personal event network here
