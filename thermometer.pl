@@ -69,10 +69,15 @@ $os_opts{pid_file} ||= ($config->{pid_file} || '/tmp/thermometer.pid');
 # provided by Log::Report. Output still also to the screen.
 dispatcher SYSLOG => 'syslog', accept => 'INFO-', identity => 'thermometer daemon', facility => 'local0';
 dispatcher mode => $mode, 'ALL' if $mode;
+#warn "Mode is $mode";
 
-my $daemon = Any::Daemon->new(%os_opts);
+my $daemon;
+$daemon = Any::Daemon->new(%os_opts);
+
 
 foreach my $k (keys %{ $config->{devices} }) {
+
+#  info "starting device $k";
 
   if ($config->{devices}->{$k}->{type} eq 'thermometer') {
     $daemon->run(child_task => &run_temperature_task($k, $config->{devices}->{$k}), 
@@ -116,7 +121,7 @@ sub run_temperature_task(@) {
   return sub {
 
 
-    info "Starting temperature daemon";
+    warning "Starting temperature daemon";
 
     while(1) {   
 
@@ -125,20 +130,32 @@ sub run_temperature_task(@) {
       if ($res->is_success) {
 
 	my $scalar = from_json($res->content);
-	info "Temperature is " . $scalar->{ 'temp' } . "\n";
+#	info "Temperature is " . $scalar->{ 'temp' } . "\n";
+	warning "Temperature is " . $scalar->{ 'temp' } . "\n";
 
 	my $response = $event->raise({'temperature' => $scalar->{ 'temp' },
 				     }
 				    );
 
-	# foreach my $d (@{$response->{'directives'}}) {
-	#   if ($d->{'name'} eq 'thermostat') {
-	#     foreach my $o ($d->{'options'}) {
-	#       info $o
-	#     }
-	#   }
-	# }
+#	warning Dumper $response->{'directives'};
 
+	foreach my $d (@{$response->{'directives'}}) {
+	   if ($d->{'name'} eq 'radstat') {
+	     my $o = $d->{'options'};
+	     if ($o->{'message'}) {
+	       radstat_request($ua, "$thermo_url/pma", "message set", {message => $o->{'message'}} );
+	     } elsif ($o->{'led'}) {
+	       my $color = ($o->{'led'} eq "green")  ? 1 :
+                           ($o->{'led'} eq "yellow") ? 2 :
+                           ($o->{'led'} eq "red")    ? 4 :
+                                                       0 ;   # off
+	       radstat_request($ua, "$thermo_url/led", "LED color change ($color)" , {energy_led => $color});
+	     }
+	   }
+	 }
+
+      } else {
+	warning "Can't connect to thermostat: " + $res->message;
       }
 
       sleep $sleep_sec;
@@ -163,5 +180,35 @@ sub read_config {
     return $config;
 }
 
+
+#
+# radstat functions
+#
+
+sub radstat_request {
+  my ($ua, $resource_uri, $message, $content ) = @_;
+  my $post = HTTP::Request->new(POST => $resource_uri);
+  $post->content(to_json($content));
+  my $res  = $ua->request($post);
+  if ($res->is_success()) {
+    parse_response($res, $message);
+  } else {
+    warning "HTTP request to $resource_uri failed: " . $res->message();
+  }
+  
+}
+
+sub parse_response {
+  my($res, $message) = @_;
+  my $content = from_json($res->content());
+  if (defined $content->{'success'}) {
+    warning "$message succeeded";
+  } elsif (defined $content->{'error'}) {
+    warning "$message failed";
+  } else {
+    warning "No status for $message";
+    warning Dumper $res;
+  }
+}
 
 1;
