@@ -6,7 +6,7 @@
 use warnings;
 use strict;
 
-use lib qw(../Kinetic);
+use lib qw(../Raise);
 
 use Log::Report;
 use Any::Daemon;
@@ -53,6 +53,8 @@ $run_opts{background} ||= 1;
 #
 
 my $config = read_config($config_filename || DEFAULT_CONFIG_FILE);
+
+die "No config file available $@" unless $config->{'user'};
 
 # print Dumper $config;
 
